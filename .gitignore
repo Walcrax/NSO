@@ -1,0 +1,15 @@
+# Python cache and environments
+__pycache__/
+*.py[cod]
+.venv/
+env/
+
+# Local runtime ledgers and forensic evidence dumps
+audit_chain.jsonl
+evidence_*.png
+evidence_*.html
+
+# OS & Editor files
+.vscode/
+.DS_Store
+Thumbs.db
