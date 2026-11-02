@@ -53,7 +53,53 @@ def verify_disk_ledger(filepath=LEDGER_FILE):
         expected_sig = hmac.new(SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()[:16]
         if b["sig"] != expected_sig:
             return f"TAMPER DETECTED at line {i+1}: signature mismatch!"
+
+        # Track B: Verify external evidence file SHA-256 integrity
+        if isinstance(b.get("data"), dict):
+            ev_file = b["data"].get("evidence_file")
+            ev_hash = b["data"].get("evidence_sha256")
+            if ev_file and ev_hash:
+                if hash_evidence_file(ev_file) != ev_hash:
+                    return f"ARTIFACT TAMPER DETECTED at line {i+1}: '{ev_file}' was modified or deleted on disk!"
+
     return f"LEDGER VALID: {len(chain)} total blocks verified on disk."
+
+SIGNATURE_FILE = "attack_signatures.jsonl"
+
+def init_signature_registry():
+    """Creates default Threat Signature Registry if not present on disk."""
+    if not os.path.exists(SIGNATURE_FILE):
+        default_sigs = [
+            {"id": "SIG-001", "name": "API_MASS_EXPORT", "pattern": "export=all", "severity": "HIGH"},
+            {"id": "SIG-002", "name": "PROMPT_OVERRIDE_INJECTION", "pattern": "SYSTEM OVERRIDE", "severity": "CRITICAL"},
+            {"id": "SIG-003", "name": "DEBUG_ENDPOINT_PROBE", "pattern": "/api/debug/", "severity": "MEDIUM"}
+        ]
+        with open(SIGNATURE_FILE, "w", encoding="utf-8") as f:
+            for sig in default_sigs:
+                f.write(json.dumps(sig) + "\n")
+
+def scan_threat_signatures(raw_logs):
+    """Deterministically matches raw logs against attack_signatures.jsonl."""
+    init_signature_registry()
+    with open(SIGNATURE_FILE, "r", encoding="utf-8") as f:
+        signatures = [json.loads(line) for line in f if line.strip()]
+    
+    matched_ids = set()
+    raw_blob = json.dumps(raw_logs).lower()
+    for sig in signatures:
+        if sig["pattern"].lower() in raw_blob:
+            matched_ids.add(sig["id"])
+    return sorted(list(matched_ids))
+
+def hash_evidence_file(filepath):
+    """Computes SHA-256 hash of an external evidence file (e.g., PNG/HTML snapshot)."""
+    if not os.path.exists(filepath):
+        return None
+    h = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        while chunk := f.read(8192):
+            h.update(chunk)
+    return h.hexdigest()
 
 # --- 2. DETERMINISTIC SENSORS, SANITIZER & OLLAMA VERDICT ---
 def sanitize_logs(raw_logs, max_str_len=64):
@@ -158,10 +204,18 @@ if __name__ == "__main__":
         {"t": 11, "session": "sess_C", "cmd": "POST /login", "bytes_out": 210,   "user": INJECTED_USER}
     ]
 
-    # Step 1: Deterministic Volume & DB State
+    # Create a sample HTML crime-scene snapshot to test cryptographic file binding
+    evidence_path = "evidence_snapshot_01.html"
+    with open(evidence_path, "w", encoding="utf-8") as f:
+        f.write("<html><body><h1>Captured Attack Traffic Dump - Session B</h1></body></html>")
+
+    # Step 1: Deterministic Volume, Threat Signatures & Artifact Hash
     b1 = append_block("1_Telemetry", "Agent_1", {
         "rows_intact": True,
-        "max_bytes_out": max(l["bytes_out"] for l in http_logs)
+        "max_bytes_out": max(l["bytes_out"] for l in http_logs),
+        "matched_signatures": scan_threat_signatures(http_logs),
+        "evidence_file": evidence_path,
+        "evidence_sha256": hash_evidence_file(evidence_path)
     })
 
     # Step 2: Deterministic Canary Check (Notice: exact match fails because of the injected text!)

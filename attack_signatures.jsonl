@@ -1,0 +1,3 @@
+{"id": "SIG-001", "name": "API_MASS_EXPORT", "pattern": "export=all", "severity": "HIGH"}
+{"id": "SIG-002", "name": "PROMPT_OVERRIDE_INJECTION", "pattern": "SYSTEM OVERRIDE", "severity": "CRITICAL"}
+{"id": "SIG-003", "name": "DEBUG_ENDPOINT_PROBE", "pattern": "/api/debug/", "severity": "MEDIUM"}
