@@ -79,15 +79,24 @@ def init_signature_registry():
                 f.write(json.dumps(sig) + "\n")
 
 def scan_threat_signatures(raw_logs):
-    """Deterministically matches raw logs against attack_signatures.jsonl."""
+    """Deterministically matches raw logs (and cross-session stitched strings) against attack_signatures.jsonl."""
     init_signature_registry()
     with open(SIGNATURE_FILE, "r", encoding="utf-8") as f:
         signatures = [json.loads(line) for line in f if line.strip()]
     
     matched_ids = set()
     raw_blob = json.dumps(raw_logs).lower()
+    
+    # Stitch string fields across all sessions to catch split keywords (e.g., "SYSTEM " + "OVERRIDE")
+    stitched_strings = " ".join(
+        str(v) for entry in raw_logs for v in entry.values() if isinstance(v, str)
+    ).lower()
+    # Also strip comment delimiters so "SYSTEM /* */ OVERRIDE" collapses into "system override"
+    normalized_stream = " ".join(stitched_strings.replace("/*", " ").replace("*/", " ").split())
+
     for sig in signatures:
-        if sig["pattern"].lower() in raw_blob:
+        pat = sig["pattern"].lower()
+        if pat in raw_blob or pat in normalized_stream:
             matched_ids.add(sig["id"])
     return sorted(list(matched_ids))
 
