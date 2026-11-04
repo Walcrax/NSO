@@ -1,7 +1,17 @@
-# NSO — Narrow Sparrow Overseer
-**Forensic AI Swarm Detection & Cryptographic Audit Ledger**
+<div align="center">
+  <img
+    src="assets/NSObanner.png"
+    alt="Narrow Sparrow Overseer"
+    width="100%"
+	[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
+    [![Security](https://img.shields.io/badge/Domain-AI%20Security-00d084)]()
+  />
+</div>
 
-A hybrid deterministic/LLM forensic analysis engine designed to detect coordinated multi-session ("swarm") attacks, prevent adversarial prompt injection inside server telemetry, and maintain a tamper-evident cryptographic chain of custody.
+
+<br>
+
+**NSO** is being build to be hybrid deterministic/LLM forensic analysis engine designed to detect coordinated multi-session ("swarm") attacks, prevent adversarial prompt injection inside server telemetry, and maintain a tamper-evident cryptographic chain of custody.
 
 ## 1. Core Security Problem: The "Oracle Problem" in LLM Log Analysis
 
