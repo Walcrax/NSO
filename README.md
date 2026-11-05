@@ -3,7 +3,7 @@
     src="assets/NSObanner.png"
     alt="Narrow Sparrow Overseer"
     width="100%"
-	[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
+	  [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
     [![Security](https://img.shields.io/badge/Domain-AI%20Security-00d084)]()
   />
 </div>
