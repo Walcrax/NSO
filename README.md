@@ -5,8 +5,7 @@
   <p><b>Cryptographic Forensic Ledger & Multi-Agent Swarm Injection Detector</b></p>
 
   <p>
-    <a href="https://python.org">
-    <img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white" alt="Python" />
+    <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white" alt="Python" /></a>
     <img src="https://img.shields.io/badge/Domain-AI%20Security-00d084" alt="AI Security" />
     <img src="https://img.shields.io/badge/LLM-Qwen%203.5%209B-purple" alt="Qwen 3.5 9B" />
     <img src="https://img.shields.io/badge/Integrity-HMAC--SHA256-critical" alt="HMAC-SHA256" />
