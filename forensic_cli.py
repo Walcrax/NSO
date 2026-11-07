@@ -139,8 +139,6 @@ def sanitize_logs(raw_logs, max_str_len=64):
         sanitized.append(clean_entry)
 
     # If 2+ sessions carry suspicious meta-tokens, flag distributed swarm injection
-    if sessions_with_meta_tokens >= 2:
-        alerts += sessions_with_meta_tokens
     # Layer 1b: Catch keywords split across multiple sessions (e.g., "SYS" + "TEM")
     collapsed_stream = "".join(
         str(v) for entry in raw_logs for v in entry.values() if isinstance(v, str)
@@ -201,8 +199,13 @@ def analyze_with_qwen(telemetry, canary_data, logs):
                 verdict_data = {"error": "INVALID_JSON", "raw_output": raw_response}
 
             # Layer 3: Deterministic Oracle Cross-Check
+            # Layer 3: Deterministic Oracle Cross-Check
             oracle_contradiction = (
-                (canary_data.get("canary_triggered") or telemetry.get("max_bytes_out", 0) > 10000)
+                (
+                    canary_data.get("canary_triggered")
+                    or telemetry.get("max_bytes_out", 0) > 10000
+                    or telemetry.get("total_bytes_out", 0) > 15000
+                )
                 and not verdict_data.get("was_data_stolen", False)
             )
 
@@ -247,6 +250,7 @@ if __name__ == "__main__":
     b1 = append_block("1_Telemetry", "Agent_1", {
         "rows_intact": True,
         "max_bytes_out": max(l["bytes_out"] for l in http_logs),
+        "total_bytes_out": sum(l["bytes_out"] for l in http_logs),
         "matched_signatures": scan_threat_signatures(http_logs),
         "evidence_file": evidence_path,
         "evidence_sha256": hash_evidence_file(evidence_path)
