@@ -1,2 +1,4 @@
 latest_cot_trace.log
 __pycache__/
+
+private_key.pem

@@ -1,11 +1,59 @@
-import hashlib, hmac, json, os, urllib.request, urllib.error
+import getpass, hashlib, json, os, sys, urllib.request, urllib.error
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 LEDGER_FILE = "audit_chain.jsonl"
-SECRET_KEY = b"cyber_police_master_key_01"
+PRIVATE_KEY_FILE = "private_key.pem"
+PUBLIC_KEY_FILE = "public_key.pem"
 OLLAMA_MODEL = "qwen3.5:9b"
 CANARY_ACCOUNT = "walcrax@sample-portal.local"
 
-# --- 1. PERSISTENT ON-DISK HASH CHAIN ENGINE ---
+# --- 1. ASYMMETRIC KEY CUSTODY & ON-DISK HASH CHAIN ENGINE ---
+def generate_keypair():
+    """Generates an encrypted Ed25519 private key and a committable public key."""
+    if os.path.exists(PRIVATE_KEY_FILE):
+        raise FileExistsError(f"'{PRIVATE_KEY_FILE}' already exists. Move or delete it before regenerating.")
+    pw1 = getpass.getpass("Create passphrase for private_key.pem: ")
+    pw2 = getpass.getpass("Confirm passphrase: ")
+    if not pw1 or pw1 != pw2:
+        raise ValueError("Passphrases did not match or were empty.")
+
+    priv_key = ed25519.Ed25519PrivateKey.generate()
+    pub_key = priv_key.public_key()
+
+    with open(PRIVATE_KEY_FILE, "wb") as f:
+        f.write(priv_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.BestAvailableEncryption(pw1.encode("utf-8"))
+        ))
+    with open(PUBLIC_KEY_FILE, "wb") as f:
+        f.write(pub_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ))
+    print(f"Keys generated: '{PRIVATE_KEY_FILE}' (encrypted, gitignored) & '{PUBLIC_KEY_FILE}' (public).")
+
+def load_private_key():
+    if not os.path.exists(PRIVATE_KEY_FILE):
+        raise FileNotFoundError(f"Missing '{PRIVATE_KEY_FILE}'. Run: python forensic_cli.py --keygen")
+    pw = getpass.getpass("Enter NSO operator passphrase: ")
+    with open(PRIVATE_KEY_FILE, "rb") as f:
+        key = serialization.load_pem_private_key(f.read(), password=pw.encode("utf-8"))
+    if not isinstance(key, ed25519.Ed25519PrivateKey):
+        raise TypeError("Expected an Ed25519 private key.")
+    return key
+
+def load_public_key():
+    if not os.path.exists(PUBLIC_KEY_FILE):
+        raise FileNotFoundError(f"Missing '{PUBLIC_KEY_FILE}'. Cannot verify ledger authenticity.")
+    with open(PUBLIC_KEY_FILE, "rb") as f:
+        key = serialization.load_pem_public_key(f.read())
+    if not isinstance(key, ed25519.Ed25519PublicKey):
+        raise TypeError("Expected an Ed25519 public key.")
+    return key
+
 def get_last_hash(filepath=LEDGER_FILE):
     if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
         return "0000"
@@ -13,10 +61,8 @@ def get_last_hash(filepath=LEDGER_FILE):
         lines = [line.strip() for line in f if line.strip()]
         return json.loads(lines[-1])["hash"] if lines else "0000"
 
-def append_block(step_name, agent_id, data, expected_prev_hash=None, filepath=LEDGER_FILE):
+def append_block(step_name, agent_id, data, signing_key, expected_prev_hash=None, filepath=LEDGER_FILE):
     disk_prev_hash = get_last_hash(filepath)
-    
-    # Consistency guard: verifies the file on disk hasn't changed since the previous step
     if expected_prev_hash is not None and disk_prev_hash != expected_prev_hash:
         raise RuntimeError(
             f"CRITICAL TAMPER / RACE CONDITION before step '{step_name}'! "
@@ -24,8 +70,8 @@ def append_block(step_name, agent_id, data, expected_prev_hash=None, filepath=LE
         )
 
     payload = f"{step_name}|{agent_id}|{json.dumps(data, sort_keys=True)}|{disk_prev_hash}"
-    sig = hmac.new(SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()[:16]
-    block_hash = hashlib.sha256(f"{payload}|{sig}".encode()).hexdigest()[:16]
+    sig = signing_key.sign(payload.encode("utf-8")).hex()
+    block_hash = hashlib.sha256(f"{payload}|{sig}".encode("utf-8")).hexdigest()[:16]
 
     block = {
         "step": step_name,
@@ -42,6 +88,7 @@ def append_block(step_name, agent_id, data, expected_prev_hash=None, filepath=LE
 def verify_disk_ledger(filepath=LEDGER_FILE):
     if not os.path.exists(filepath):
         return "No ledger file found."
+    pub_key = load_public_key()
     with open(filepath, "r", encoding="utf-8") as f:
         chain = [json.loads(line) for line in f if line.strip()]
 
@@ -50,11 +97,11 @@ def verify_disk_ledger(filepath=LEDGER_FILE):
         if b["prev_hash"] != expected_prev:
             return f"BROKEN CHAIN at line {i+1}: prev_hash ({b['prev_hash']}) != {expected_prev}"
         payload = f"{b['step']}|{b['agent']}|{json.dumps(b['data'], sort_keys=True)}|{b['prev_hash']}"
-        expected_sig = hmac.new(SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()[:16]
-        if b["sig"] != expected_sig:
-            return f"TAMPER DETECTED at line {i+1}: signature mismatch!"
+        try:
+            pub_key.verify(bytes.fromhex(b["sig"]), payload.encode("utf-8"))
+        except (InvalidSignature, ValueError):
+            return f"FORGERY DETECTED at line {i+1}: Ed25519 signature verification failed!"
 
-        # Track B: Verify external evidence file SHA-256 integrity
         if isinstance(b.get("data"), dict):
             ev_file = b["data"].get("evidence_file")
             ev_hash = b["data"].get("evidence_sha256")
@@ -62,7 +109,7 @@ def verify_disk_ledger(filepath=LEDGER_FILE):
                 if hash_evidence_file(ev_file) != ev_hash:
                     return f"ARTIFACT TAMPER DETECTED at line {i+1}: '{ev_file}' was modified or deleted on disk!"
 
-    return f"LEDGER VALID: {len(chain)} total blocks verified on disk."
+    return f"LEDGER VALID: {len(chain)} total Ed25519-signed blocks verified on disk."
 
 SIGNATURE_FILE = "attack_signatures.jsonl"
 
@@ -231,11 +278,16 @@ def analyze_with_qwen(telemetry, canary_data, logs):
         return {"error": f"Ollama timeout or unreachable ({e})."}
 
 if __name__ == "__main__":
-    # Pre-flight check: verify existing disk ledger BEFORE starting a new investigation
+    if "--keygen" in sys.argv:
+        generate_keypair()
+        sys.exit(0)
+
     if os.path.exists(LEDGER_FILE):
         status = verify_disk_ledger()
         if not status.startswith("LEDGER VALID"):
             raise RuntimeError(f"Refusing to append to corrupted ledger! {status}")
+
+    operator_key = load_private_key()
 
     http_logs = [
         {"t": 1000, "session": "sess_A", "path": "/api/debug/users?check=1", "bytes_out": 180, "user": "guest_SYS"},
@@ -243,12 +295,10 @@ if __name__ == "__main__":
         {"t": 1010, "session": "sess_C", "path": "/login", "bytes_out": 210, "user": f"RIDE_{CANARY_ACCOUNT}"}
     ]
 
-    # Create a sample HTML crime-scene snapshot to test cryptographic file binding
     evidence_path = "evidence_snapshot_01.html"
     with open(evidence_path, "w", encoding="utf-8") as f:
         f.write("<html><body><h1>Captured Attack Traffic Dump - Session B</h1></body></html>")
 
-    # Step 1: Deterministic Volume, Threat Signatures & Artifact Hash
     b1 = append_block("1_Telemetry", "Agent_1", {
         "rows_intact": True,
         "max_bytes_out": max(l["bytes_out"] for l in http_logs),
@@ -256,17 +306,15 @@ if __name__ == "__main__":
         "matched_signatures": scan_threat_signatures(http_logs),
         "evidence_file": evidence_path,
         "evidence_sha256": hash_evidence_file(evidence_path)
-    })
+    }, operator_key)
 
-    # Step 2: Deterministic Canary Check
     b2 = append_block("2_Canary_Timing", "Agent_2", {
         "canary_triggered": any(CANARY_ACCOUNT in (l["user"] or "") for l in http_logs),
         "deltas_sec": [http_logs[i]["t"] - http_logs[i-1]["t"] for i in range(1, len(http_logs))]
-    }, expected_prev_hash=b1["hash"])
+    }, operator_key, expected_prev_hash=b1["hash"])
 
-    # Step 3: Qwen 3.5 9B Verdict (also writes latest_cot_trace.log and hashes it)
     qwen_report = analyze_with_qwen(b1["data"], b2["data"], http_logs)
-    b3 = append_block("3_Qwen_Verdict", "Agent_3_LLM", qwen_report, expected_prev_hash=b2["hash"])
+    b3 = append_block("3_Qwen_Verdict", "Agent_3_LLM", qwen_report, operator_key, expected_prev_hash=b2["hash"])
 
     print(f"\nLogged Blocks -> {b1['hash']} -> {b2['hash']} -> {b3['hash']}")
     print(f"Matched Sigs  -> {b1['data']['matched_signatures']}")
